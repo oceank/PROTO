@@ -1,10 +1,11 @@
 import collections
-from typing import Optional
+from typing import Optional, Union, Tuple, Dict
 
 import d4rl
 import gym
 import numpy as np
 from tqdm import tqdm
+import h5py
 
 import os
 try:
@@ -96,6 +97,28 @@ def merge_trajectories(trajs):
         rewards), np.stack(masks), np.stack(dones_float), np.stack(
             next_observations)
 
+
+def load_dataset_h5py(filepath: str) -> Tuple[Dict, Dict[str, Union[str, int, float]]]:
+    with h5py.File(filepath, 'r') as hfile:
+        dataset_dict = {}
+        metadata = {}
+
+        for k in hfile.keys():
+            v = hfile[k]
+            if k == "metadata":
+                metadata = {kk: vv[()] if not isinstance(vv[()], np.string_) else str(vv[()]) for kk, vv in v.items()}
+            else:
+                dataset_dict[k] = v[()]
+
+        dataset = Dataset(observations=dataset_dict['observations'],
+                          actions=dataset_dict['actions'],
+                          rewards=dataset_dict['rewards'],
+                          masks=dataset_dict['masks'],
+                          dones_float=dataset_dict['dones_float'],
+                          next_observations=dataset_dict['next_observations'],
+                          size=len(dataset_dict['observations'])
+                        )
+        return dataset, metadata
 
 class Dataset(object):
     def __init__(self, observations: np.ndarray, actions: np.ndarray,

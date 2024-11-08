@@ -8,7 +8,7 @@ import numpy as np
 def evaluate(agent: nn.Module, env: gym.Env,
              num_episodes: int, offline: bool, verbose: bool = False) -> Dict[str, float]:
     stats = {'return': [], 'length': []}
-    temperature = 1. if env.spec._env_name.split("-")[0] == 'antmaze' else 0.
+    temperature = 1. if env.spec.name.split("-")[0] == 'antmaze' else 0.
     
     for _ in range(num_episodes):
         observation, done = env.reset(), False

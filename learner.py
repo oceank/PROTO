@@ -62,27 +62,33 @@ def _update_jit(
     }
 
 
-@partial(jax.jit, static_argnames=['double', 'vanilla', 'args', 'offline'])
+@partial(jax.jit, static_argnames=['double', 'args', 'discount', 'tau', 'tau_actor', 'ratio', 'target_entropy'])
 def _update_jit_online(
     rng: PRNGKey, offline_actor: Model, online_actor: Model, critic: Model, value: Model,
     target_critic: Model, target_online_actor: Model, behavior: Model, batch: Batch, discount: float, tau: float, tau_actor: float, 
-    expectile: float, temp: float, temp_online: float, ratio: float, double: bool, vanilla: bool, log_alpha: float, 
+    temp: float, temp_online: float, ratio: float, double: bool, log_alpha: float, 
     target_entropy: float, args,
 ) -> Tuple[PRNGKey, Model, Model, Model, Model, Model, InfoDict]:
 
     key_critic, key_actor, key_alpha, rng = jax.random.split(rng, num=4)
-    for i in range(args.utd):
-        
-        def slice(x):
-            assert x.shape[0] % args.utd == 0
-            batch_size = x.shape[0] // args.utd
-            return x[batch_size * i : batch_size * (i + 1)]
-        
-        mini_batch = jax.tree_util.tree_map(slice, batch)
-        new_critic, key_critic, critic_info = update_q_online(critic, target_critic, target_online_actor, online_actor, behavior, offline_actor, mini_batch, discount, double, key_critic, temp, temp_online, log_alpha, args)
-        new_target_critic = target_update(new_critic, target_critic, tau)
-        critic = new_critic
-        target_critic = new_target_critic
+    # assume that utd is 1 for our experiment, so we don't need to loop
+    '''
+    for i in range(args.utd): 
+
+    def slice(x):
+        assert x.shape[0] % args.utd == 0
+        batch_size = x.shape[0] // args.utd
+        return x[batch_size * i : batch_size * (i + 1)]
+    '''
+
+    mini_batch = batch #jax.tree_util.tree_map(slice, batch)
+
+    new_critic, key_critic, critic_info = update_q_online(critic, target_critic, target_online_actor, online_actor, behavior, offline_actor, mini_batch, discount, double, key_critic, temp, temp_online, log_alpha, args)
+
+    new_target_critic = target_update(new_critic, target_critic, tau)
+
+    critic = new_critic
+    target_critic = new_target_critic
     
     new_online_actor, online_actor_info = sac_update_actor(key_actor, online_actor, offline_actor, new_critic, target_online_actor, behavior, mini_batch, temp, temp_online, ratio, double, log_alpha, args)
 
@@ -91,8 +97,9 @@ def _update_jit_online(
     # else:
     #     new_log_alpha = log_alpha
     #     alpha_info = {'target_entropy': target_entropy}
-        
+
     new_target_actor = target_update(new_online_actor, target_online_actor, tau_actor)
+
     
     return rng, new_online_actor, new_critic, new_target_critic, new_target_actor, new_log_alpha, {
         **critic_info,
@@ -243,8 +250,8 @@ class Learner(object):
         else:
             new_rng, new_online_actor, new_critic, new_target_critic, new_target_actor, new_log_alpha, info = _update_jit_online(
             self.rng, self.offline_actor, self.online_actor, self.critic, self.value, self.target_critic, self.target_online_actor, self.behavior, 
-            batch, self.discount, self.tau, self.tau_actor, self.expectile, self.loss_temp, self.loss_temp_online, self.ratio, self.double_q_online,
-            self.vanilla, self.log_alpha, self.target_entropy, self.args) 
+            batch, self.discount, self.tau, self.tau_actor, self.loss_temp, self.loss_temp_online, self.ratio, self.double_q_online,
+            self.log_alpha, self.target_entropy, self.args) 
             
             self.online_actor = new_online_actor
             self.target_online_actor = new_target_actor
@@ -269,13 +276,18 @@ class Learner(object):
         self.target_online_actor = new_target_online_actor
        
     
-    def load(self, save_dir: str):
+    def load(self, save_dir: str, offline: bool):
+        self.offline_actor = self.offline_actor.load(os.path.join(save_dir, 'offline_actor'))
+        self.behavior = self.behavior.load(os.path.join(save_dir, 'behavior'))
+        self.online_actor = self.online_actor.load(os.path.join(save_dir, 'online_actor'))
+        self.target_online_actor = self.target_online_actor.load(os.path.join(save_dir, 'target_online_actor'))
+        
         self.actor = self.actor.load(os.path.join(save_dir, 'actor'))
         self.critic = self.critic.load(os.path.join(save_dir, 'critic'))
         self.value = self.value.load(os.path.join(save_dir, 'value'))
         self.target_critic = self.target_critic.load(os.path.join(save_dir, 'critic'))
 
-    def save(self, save_dir: str):
+    def save(self, save_dir: str, offline: bool):
         self.actor.save(os.path.join(save_dir, 'actor'))
         self.critic.save(os.path.join(save_dir, 'critic'))
         self.value.save(os.path.join(save_dir, 'value'))

@@ -1,7 +1,7 @@
 import os
-os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+#os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 from typing import Tuple
-from typing import Tuple
+import cloudpickle as pickle
 
 import datetime
 import time
@@ -17,7 +17,7 @@ from matplotlib import pyplot as plt
 
 import wrappers
 from dataset_utils import (Batch, D4RLDataset, ReplayBuffer, BinaryDataset,
-                           split_into_trajectories)
+                           split_into_trajectories, load_dataset_h5py)
 from evaluation import evaluate
 from learner import Learner
 import wandb
@@ -33,12 +33,15 @@ flags.DEFINE_integer('eval_episodes', 10,
 flags.DEFINE_integer('log_interval', 1000, 'Logging interval.')
 flags.DEFINE_integer('eval_interval', 5000, 'Eval interval.')
 flags.DEFINE_integer('batch_size', 256, 'Mini batch size.')
-flags.DEFINE_integer('max_steps', int(1e6), 'Number of training steps.')
-flags.DEFINE_integer('num_pretraining_steps', int(2e5),
+#int(1e6)
+flags.DEFINE_integer('max_steps', int(1e4), 'Number of training steps.')
+#int(2e5)
+flags.DEFINE_integer('num_pretraining_steps', int(5e3),
                      'Number of pretraining steps.')
 flags.DEFINE_float('temp', 2, 'Loss temperature')
 flags.DEFINE_float('tau_actor', 0.005, 'actor moving average')
 flags.DEFINE_float('min_temp_online', 0., 'min online temp')
+flags.DEFINE_boolean('load_dataset_from_path', False, 'Load dataset from path')
 flags.DEFINE_boolean('ablation', False, 'For experiments management')
 flags.DEFINE_boolean('bc_pretrain', False, 'reward-free pretraining')
 flags.DEFINE_boolean('double', True, 'Use double q-learning when offline pretrain')
@@ -76,6 +79,15 @@ config_flags.DEFINE_config_file(
     'File path to the training hyperparameter configuration.',
     lock_config=False)
 
+
+def save_pickle(obj, filepath):
+    with open(filepath, 'wb') as fout:
+        pickle.dump(obj, fout)
+
+def load_pickle(filepath):
+    with open(filepath, 'rb') as fin:
+        data = pickle.load(fin)
+    return data
 
 @dataclass(frozen=True)
 class ConfigArgs:
@@ -118,7 +130,8 @@ def normalize(dataset):
 
 
 def make_env_and_dataset(env_name: str,
-                         seed: int) -> Tuple[gym.Env, gym.Env, D4RLDataset, float]:
+                         seed: int,
+                         load_dataset_from_path=False) -> Tuple[gym.Env, gym.Env, D4RLDataset, float]:
     env = gym.make(env_name)
 
     env = wrappers.EpisodeMonitor(env)
@@ -137,13 +150,17 @@ def make_env_and_dataset(env_name: str,
     env_eval.action_space.seed(seed)
     env_eval.observation_space.seed(seed)
 
-    if 'binary' in env_name:
-        dataset = BinaryDataset(env)
+    if load_dataset_from_path:
+        dataset, metadata = load_dataset_h5py(env_name)
     else:
-        dataset = D4RLDataset(env)
+        if 'binary' in env_name:
+            dataset = BinaryDataset(env)
+        else:
+            dataset = D4RLDataset(env)
 
-    if ('halfcheetah' in FLAGS.env_name or 'walker2d' in FLAGS.env_name
-          or 'hopper' in FLAGS.env_name):
+    env_name_lower = env_name.lower()
+    if ('halfcheetah' in env_name_lower or 'walker2d' in env_name_lower
+          or 'hopper' in env_name_lower):
         normalize_factor = normalize(dataset)
     else:
         normalize_factor = 1.
@@ -184,7 +201,7 @@ def main(_):
     summary_writer = SummaryWriter(os.path.join(save_dir, 'tb', hparam_str), write_to_disk=True)
     os.makedirs(save_dir, exist_ok=True)
 
-    env, env_eval, dataset, normalize_factor = make_env_and_dataset(FLAGS.env_name, FLAGS.seed)
+    env, env_eval, dataset, normalize_factor = make_env_and_dataset(FLAGS.env_name, FLAGS.seed, FLAGS.load_dataset_from_path)
 
     action_dim = env.action_space.shape[0]
     replay_buffer = ReplayBuffer(env.observation_space, action_dim,
